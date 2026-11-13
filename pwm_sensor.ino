@@ -1,0 +1,89 @@
+#include <Arduino.h>
+
+// --- PARÁMETROS CONFIGURABLES DE LA PRÁCTICA ---
+const int pinSensorAnalogo = A0;    // Pin analógico conectado a la salida análoga del sensor
+const int pinPWM = 9;               // Pin PWM del Arduino UNO conectado a la base del transistor (TIP31/TIP120)[cite: 2, 5]
+const float Tm = 1.0;               // Tiempo de muestreo en segundos[cite: 2, 3]
+const int N = 20;                   // Pulsos por vuelta del disco ranurado[cite: 2, 3]
+const float D_rueda = 2.5;          // Diámetro de la rueda en cm (ajústalo si tu rueda es de 5 cm)[cite: 6, 8]
+const unsigned long t_estab = 5000; // Tiempo de estabilización de 5 segundos por nivel[cite: 6]
+
+// Variables para la detección del flanco analógico
+int umbral = 512;                   // Valor medio de voltaje (0-1023) para detectar el paso de la ranura
+bool estadoAnterior = false;
+
+void setup() {
+  // Inicializar comunicación serial a 115200 baudios
+  Serial.begin(115200); 
+  delay(1000);
+
+  // Configurar pin PWM como salida
+  pinMode(pinPWM, OUTPUT);
+
+  Serial.println("=== INICIO DE BARRIDO PWM (LECTURA ANÁLOGA EN A0) ===");
+  
+  // Ejecutar el barrido automático una sola vez al iniciar
+  ejecutarBarridoPWM();
+  
+  Serial.println("=== BARRIDO FINALIZADO ===");
+}
+
+void loop() {
+  // Vacío, el barrido se ejecuta de forma secuencial en el setup
+}
+
+void ejecutarBarridoPWM() {
+  // Pasos de ciclo de trabajo indicados en la guía (10% al 100%)[cite: 6]
+  int pasos[] = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+  int numPasos = 10;
+
+  for (int i = 0; i < numPasos; i++) {
+    int D = pasos[i];
+
+    // Mapear el porcentaje de Duty (0-100) al valor digital de 8 bits del Arduino UNO (0 a 255)
+    int valorDigital = map(D, 0, 100, 0, 255);
+    
+    // Aplicar el PWM al pin del transistor
+    analogWrite(pinPWM, valorDigital);
+
+    // 1. Esperar el tiempo de estabilización mecánica del motor (5 segundos)[cite: 6]
+    delay(t_estab);
+
+    // 2. Ventana de muestreo de Tm segundos (1 segundo) midiendo por analógico
+    unsigned long inicioMuestreo = millis();
+    unsigned int cont = 0;
+
+    while (millis() - inicioMuestreo < (Tm * 1000)) {
+      int valorAnalogo = analogRead(pinSensorAnalogo);
+      bool estadoActual = (valorAnalogo > umbral);
+      
+      if (estadoActual && !estadoAnterior) {
+        cont++; // Contar flanco de subida en la señal analógica
+      }
+      estadoAnterior = estadoActual;
+    }
+
+    // --- CÁLCULOS EXIGIDOS POR LA GUÍA ---
+    float f_sensor = (float)cont / Tm;                  // Frecuencia del sensor en Hz[cite: 3, 8]
+    float RPM = (f_sensor / (float)N) * 60.0;           // Velocidad en RPM[cite: 3, 8]
+    float omega = RPM * (2.0 * PI / 60.0);              // Velocidad angular en rad/s[cite: 3, 8]
+    float v = (PI * D_rueda * RPM) / 60.0;              // Velocidad lineal en cm/s[cite: 6, 8]
+
+    // Imprimir en el Monitor Serial con formato claro para la Tabla 3
+    Serial.print("D=");
+    Serial.print(D);
+    Serial.print("% | Valor Digital=");
+    Serial.print(valorDigital);
+    Serial.print(" | RPM=");
+    Serial.print(RPM, 2);
+    Serial.print(" | w=");
+    Serial.print(omega, 2);
+    Serial.print(" rad/s | v=");
+    Serial.print(v, 2);
+    Serial.println(" cm/s");
+  }
+
+  // --- APAGADO SEGURO DEL MOTOR ---
+  analogWrite(pinPWM, 0);
+  Serial.println("Motor detenido de forma segura.");
+}
